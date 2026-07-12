@@ -1,0 +1,72 @@
+name: factory-hours
+services:
+  postgres:
+    image: postgres:16
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: factory
+      POSTGRES_USER: factory
+      POSTGRES_PASSWORD: local
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  backup:
+    image: postgres:16
+    depends_on:
+      - postgres
+    environment:
+      PGPASSWORD: local
+    volumes:
+      - backupdata:/backups
+    entrypoint: >
+      sh -c "while true; do
+        pg_dump -h postgres -U factory -Fc factory > /backups/backup_$$(date +%Y%m%d_%H%M%S).dump;
+        if [ $$? -ne 0 ]; then echo 'pg_dump failed, retrying in 5 min'; sleep 300; continue; fi;
+        find /backups -name 'backup_*.dump' -mtime +7 -delete;
+        sleep 86400;
+      done"
+    profiles:
+      - backup
+
+  neo4j:
+    image: neo4j:5-community
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      NEO4J_AUTH: neo4j/local
+    volumes:
+      - neo4jdata:/data
+    profiles:
+      - graph
+
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - DATABASE_URL=sqlite:///app/data/factory.db
+      - JWT_SECRET=${JWT_SECRET:-factory-os-prod-secret}
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  backupdata:
+  neo4jdata:
